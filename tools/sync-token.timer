@@ -1,0 +1,9 @@
+[Unit]
+Description=Run sync-token every 4 hours to refresh expired tokens
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=4h
+
+[Install]
+WantedBy=timers.target

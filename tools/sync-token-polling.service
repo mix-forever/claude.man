@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude Monitor Token Sync (watchdog)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/mix/_projects/_platformio/ai_session_limits/tools/sync-token.py
+Restart=always
+RestartSec=10
+Environment="CLAUDE_MON_INTERVAL=600"
+
+[Install]
+WantedBy=default.target

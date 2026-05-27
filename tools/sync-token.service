@@ -1,0 +1,8 @@
+[Unit]
+Description=Push Claude token to CLAUDE·MAN device
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/mix/_projects/_platformio/ai_session_limits/tools/sync-token.py --oneshot

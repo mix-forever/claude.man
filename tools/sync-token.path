@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch ~/.claude/.credentials.json for token changes
+
+[Path]
+# NOTE: Install this as USER-level systemd (systemctl --user), not system-wide.
+# If installed with sudo, %%h expands to /root and the file won't be found.
+PathChanged=%h/.claude/.credentials.json
+
+[Install]
+WantedBy=default.target

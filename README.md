@@ -156,7 +156,22 @@ systemctl --user status sync-token.path
 journalctl --user -u sync-token -f
 ```
 
-#### Option C — systemd Polling service (Linux fallback)
+#### Option C — systemd Timer (Linux, handles expired tokens)
+
+If you don't use Claude Code regularly, the OAuth token expires. The timer runs `sync-token.py` every 4 hours — it attempts to refresh the token by spawning `claude --version` in the background before syncing.
+
+```bash
+cp tools/sync-token.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sync-token.timer
+```
+
+Check status:
+```bash
+systemctl --user list-timers
+```
+
+#### Option D — systemd Polling service (Linux fallback)
 
 If you prefer the Python script running continuously (with `watchdog` or polling):
 
@@ -289,9 +304,10 @@ ai_session_limits/
 ├── docs/
 │   └── TFT_eSPI_ESP32C3_ST7789_76x284_fixes.md  — display bring-up guide
 ├── tools/
-│   ├── sync-token.py            — automatic token sync client
-│   ├── sync-token.path          — systemd Path unit
+│   ├── sync-token.py            — automatic token sync client (with auto-refresh)
+│   ├── sync-token.path          — systemd Path unit (reactive)
 │   ├── sync-token.service       — systemd oneshot service
+│   ├── sync-token.timer         — systemd Timer (periodic refresh)
 │   └── sync-token-polling.service  — systemd continuous service
 └── platformio.ini
 ```

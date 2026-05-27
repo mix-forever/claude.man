@@ -13,6 +13,9 @@
 *.map
 *.hex
 
+# Session notes (AI agent context, not source code)
+SESSION.md
+
 # OS
 .DS_Store
 Thumbs.db

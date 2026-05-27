@@ -12,6 +12,7 @@ Zmienne środowiskowe:
   CLAUDE_MON_INTERVAL — interwał pollingu w sekundach (domyślnie: 600)
 """
 
+import datetime
 import json
 import os
 import sys
@@ -25,22 +26,35 @@ CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
 POLL_INTERVAL = int(os.environ.get("CLAUDE_MON_INTERVAL", "600"))
 
 
-def get_token() -> str:
-    """Odczytuje accessToken z credentials.json (wspiera różne struktury)."""
+def get_credentials() -> dict:
+    """Odczytuje cały obiekt credentials z pliku."""
     with open(CREDS_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     for key in ("claudeAiOauth", "oauth", "credentials"):
         if key in data and isinstance(data[key], dict):
-            token = data[key].get("accessToken") or data[key].get("access_token")
-            if token:
-                return token
+            return data[key]
 
-    token = data.get("accessToken") or data.get("access_token")
-    if token:
-        return token
+    if isinstance(data, dict) and ("accessToken" in data or "access_token" in data):
+        return data
 
-    raise KeyError("Nie znaleziono accessToken w ~/.claude/.credentials.json")
+    raise KeyError("Nie znaleziono credentials w ~/.claude/.credentials.json")
+
+
+def get_token(creds: dict) -> str:
+    """Wyciąga accessToken z obiektu credentials."""
+    token = creds.get("accessToken") or creds.get("access_token")
+    if not token:
+        raise KeyError("Nie znaleziono accessToken w credentials")
+    return token
+
+
+def is_token_expired(creds: dict, buffer_sec: int = 300) -> bool:
+    """Sprawdza czy token wygasł lub wygaśnie w ciągu buffer_sec (domyślnie 5 min)."""
+    expires_at = creds.get("expiresAt")
+    if not expires_at:
+        return False  # brak info — wysyłamy na własną odpowiedzialność
+    return (expires_at / 1000.0) < (time.time() + buffer_sec)
 
 
 def sync_token(token: str) -> bool:
@@ -67,7 +81,10 @@ class TokenHandler:
         if Path(event.src_path).name != ".credentials.json":
             return
         try:
-            token = get_token()
+            creds = get_credentials()
+            if is_token_expired(creds):
+                return  # token wygasł — cicho pomijamy, nie wysyłamy starego tokenu
+            token = get_token(creds)
             if token == self._last_token:
                 return
             if sync_token(token):
@@ -112,7 +129,11 @@ def run_polling():
     last_token = None
     while True:
         try:
-            token = get_token()
+            creds = get_credentials()
+            if is_token_expired(creds):
+                time.sleep(POLL_INTERVAL)
+                continue  # token wygasł — cicho pomijamy
+            token = get_token(creds)
             if token != last_token:
                 if sync_token(token):
                     last_token = token
@@ -132,7 +153,10 @@ def run_polling():
 
 def run_oneshot():
     try:
-        token = get_token()
+        creds = get_credentials()
+        if is_token_expired(creds):
+            sys.exit(0)  # token wygasł — cicho kończymy, nie wysyłamy starego tokenu
+        token = get_token(creds)
         if sync_token(token):
             print(f"[sync-token] OK — token zsynchronizowany ({time.strftime('%H:%M:%S')})")
         else:

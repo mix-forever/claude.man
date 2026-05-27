@@ -128,8 +128,9 @@ static void handleSave() {
     strncpy(cfg.apiKey, key.c_str(), sizeof(cfg.apiKey) - 1);
     cfg.apiKey[sizeof(cfg.apiKey) - 1] = '\0';
     storageSave(cfg);
-    apiTaskUpdateToken(cfg.apiKey);
-    server.send_P(200, "text/html", HTML_TOKEN_SAVED);
+    server.send_P(200, "text/html", HTML_SAVED);
+    pendingRestart = true;
+    restartAt      = millis() + 2000;
 }
 
 static void handleTokenSave() {
@@ -146,9 +147,8 @@ static void handleTokenSave() {
     strncpy(cfg.apiKey, key.c_str(), sizeof(cfg.apiKey) - 1);
     cfg.apiKey[sizeof(cfg.apiKey) - 1] = '\0';
     storageSave(cfg);
-    server.send_P(200, "text/html", HTML_SAVED);
-    pendingRestart = true;
-    restartAt      = millis() + 2000;
+    apiTaskUpdateToken(cfg.apiKey);
+    server.send_P(200, "text/html", HTML_TOKEN_SAVED);
 }
 
 // ─── OTA handlers ────────────────────────────────────────────────────────────

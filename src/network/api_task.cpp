@@ -10,6 +10,7 @@ static int               g_code   = 0;
 static bool              g_hasNew = false;
 static SemaphoreHandle_t g_mtx    = nullptr;
 static char              g_token[513];
+static TaskHandle_t      g_task   = nullptr;
 
 static void apiPollTask(void* /*param*/) {
     char localToken[513];
@@ -41,7 +42,8 @@ static void apiPollTask(void* /*param*/) {
         if (!ok && code == 429) {
             delayMs = 300000;  // 5 min backoff na rate-limit
         }
-        vTaskDelay(delayMs / portTICK_PERIOD_MS);
+        // Czekaj na delay LUB powiadomienie (np. po aktualizacji tokenu)
+        ulTaskNotifyTake(pdTRUE, delayMs / portTICK_PERIOD_MS);
     }
 }
 
@@ -55,7 +57,7 @@ void apiTaskStart(const char* token) {
         xSemaphoreGive(g_mtx);
     }
 
-    xTaskCreate(apiPollTask, "apiPoll", 8192, nullptr, 1, nullptr);
+    xTaskCreate(apiPollTask, "apiPoll", 8192, nullptr, 1, &g_task);
 }
 
 void apiTaskUpdateToken(const char* token) {
@@ -64,6 +66,10 @@ void apiTaskUpdateToken(const char* token) {
         strncpy(g_token, token, sizeof(g_token) - 1);
         g_token[sizeof(g_token) - 1] = '\0';
         xSemaphoreGive(g_mtx);
+    }
+    // Obudź task natychmiast — nowy token zostanie użyty od razu
+    if (g_task != nullptr) {
+        xTaskNotifyGive(g_task);
     }
 }
 

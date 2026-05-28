@@ -156,9 +156,9 @@ systemctl --user status sync-token.path
 journalctl --user -u sync-token -f
 ```
 
-#### Option C — systemd Timer (Linux, handles expired tokens)
+#### Option C — systemd Timer (Linux, periodic sync)
 
-If you don't use Claude Code regularly, the OAuth token expires. The timer runs `sync-token.py` every 4 hours — it attempts to refresh the token by spawning `claude --version` in the background before syncing.
+If you don't use Claude Code regularly, the OAuth token expires after ~8 hours. The timer runs `sync-token.py` every 4 hours — but **it cannot auto-refresh an expired token**. You must run Claude Code interactively (e.g. `claude` or Kimi Code) at least once every 8 hours to refresh the token. The timer then detects the updated `credentials.json` and syncs it.
 
 ```bash
 cp tools/sync-token.timer ~/.config/systemd/user/

@@ -42,22 +42,6 @@ def get_credentials() -> dict:
     raise KeyError("Nie znaleziono credentials w ~/.claude/.credentials.json")
 
 
-def try_refresh() -> bool:
-    """Uruchamia Claude CLI w tle żeby wymusić odświeżenie tokena w credentials.json."""
-    try:
-        subprocess.run(
-            ["claude", "--version"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-            check=False,
-        )
-        return True
-    except Exception:
-        return False
-
-
 def get_token(creds: dict) -> str:
     """Wyciąga accessToken z obiektu credentials."""
     token = creds.get("accessToken") or creds.get("access_token")
@@ -100,10 +84,8 @@ class TokenHandler:
         try:
             creds = get_credentials()
             if is_token_expired(creds):
-                if try_refresh():
-                    creds = get_credentials()  # odczytaj ponownie po odświeżeniu
-                if is_token_expired(creds):
-                    return  # nadal wygasł — pomijamy
+                print(f"[sync-token] Token wygasł lub wygaśnie wkrótce. Uruchom Claude Code interaktywnie, aby odświeżyć.")
+                return
             token = get_token(creds)
             if token == self._last_token:
                 return
@@ -151,11 +133,9 @@ def run_polling():
         try:
             creds = get_credentials()
             if is_token_expired(creds):
-                if try_refresh():
-                    creds = get_credentials()
-                if is_token_expired(creds):
-                    time.sleep(POLL_INTERVAL)
-                    continue  # nadal wygasł — pomijamy
+                print(f"[sync-token] Token wygasł lub wygaśnie wkrótce. Uruchom Claude Code interaktywnie, aby odświeżyć.")
+                time.sleep(POLL_INTERVAL)
+                continue
             token = get_token(creds)
             if token != last_token:
                 if sync_token(token):
@@ -178,10 +158,8 @@ def run_oneshot():
     try:
         creds = get_credentials()
         if is_token_expired(creds):
-            if try_refresh():
-                creds = get_credentials()
-            if is_token_expired(creds):
-                sys.exit(0)  # nadal wygasł — kończymy bez wysyłania
+            print("[sync-token] Token wygasł lub wygaśnie wkrótce. Uruchom Claude Code interaktywnie, aby odświeżyć.")
+            sys.exit(0)
         token = get_token(creds)
         if sync_token(token):
             print(f"[sync-token] OK — token zsynchronizowany ({time.strftime('%H:%M:%S')})")

@@ -1,5 +1,6 @@
 #include "web_config.h"
 #include "api_task.h"
+#include "../../include/config.h"
 #include <WebServer.h>
 #include <Update.h>
 
@@ -124,6 +125,9 @@ static void handleSave() {
         return;
     }
     AppConfig cfg;
+    cfg.brightness = DEFAULT_BRIGHTNESS;
+    cfg.alarmThr   = DEFAULT_ALARM_THR;
+    cfg.buzzerMute = false;
     strncpy(cfg.ssid, ssid.c_str(), sizeof(cfg.ssid) - 1);
     cfg.ssid[sizeof(cfg.ssid) - 1] = '\0';
     strncpy(cfg.pass, pass.c_str(), sizeof(cfg.pass) - 1);

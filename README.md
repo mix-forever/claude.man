@@ -13,10 +13,11 @@ Polls the Anthropic OAuth usage API every 3 minutes and renders a Pac-Man animat
 - **Live usage tracking** — 5-hour and 7-day utilization from `POST /v1/messages` rate-limit headers
 - **Pac-Man progress bar** — Pac-Man eats dots as your quota fills up; fewer dots = less quota left
 - **Color-coded alerts** — yellow (OK) → orange (70%+) → red (90%+), using official arcade palette
-- **Buzzer alarms** — 3 escalating audio patterns (waka-waka → rapid beep → continuous) when thresholds are crossed
+- **Buzzer alarms** — one-shot alarm fires when threshold is crossed; silences after 10 s; re-arms only after utilization drops and rises again
 - **PWM backlight dimming** — 4 hardware brightness levels (25/50/75/100%), persisted in NVS
+- **Auto-dim** — backlight drops to 25% after 5 minutes of inactivity; any button press restores full brightness
 - **Two tactile buttons** — test/alarm threshold (A) and brightness/mute (B)
-- **Reset countdown** — shows time remaining until the window resets (`3h16m`, `47m30s`, etc.)
+- **Live countdown** — 5H and 7D reset timers tick every minute, independent of the 3-minute API poll
 - **Wi-Fi config portal** — password-protected AP on first boot; token-only update page during normal operation
 - **OTA firmware updates** — upload `.bin` via the web dashboard at `http://claude-monitor.local/update`
 - **mDNS** — reachable as `claude-monitor.local` on your network

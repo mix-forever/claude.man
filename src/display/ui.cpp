@@ -278,6 +278,54 @@ void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode, co
     drawBar3D(72, u7d, c7);
 }
 
+// ─── Countdown refresh (5H + 7D reset times, independent of full redraw) ─────
+
+void uiRefreshCountdowns(const RateLimit& rl) {
+    if (!rl.valid) return;
+    time_t now = time(nullptr);
+
+    // 5H reset time — right column (x=248..283), row below pct (y≈37)
+    tft.fillRect(248, 33, DISPLAY_WIDTH - 248, 12, TFT_BLACK);
+    int secs5 = (int)(rl.reset5hAt - now);
+    if (secs5 > 0) {
+        String rs = secsToStr(secs5);
+        tft.setTextSize(1);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setCursor(281 - (int)rs.length() * 6, 37);
+        tft.print(rs);
+    }
+
+    // 7D reset time — bottom bar, after pct value, before WiFi dot (x<165)
+    String pct7 = fmtPct(rl.util7d);
+    int x7 = 32 + (int)pct7.length() * 6 + 6;
+    if (x7 < 164) {
+        tft.fillRect(x7, 59, 164 - x7, 11, TFT_BLACK);
+        int secs7 = (int)(rl.reset7dAt - now);
+        if (secs7 > 0) {
+            String rs = secsToStr(secs7);
+            tft.setTextSize(1);
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            tft.setCursor(x7, 61);
+            tft.print(rs);
+        }
+    }
+}
+
+// ─── Clock refresh (bottom bar only) ─────────────────────────────────────────
+
+void uiRefreshClock() {
+    time_t now = time(nullptr);
+    struct tm t;
+    if (!localtime_r(&now, &t) || t.tm_year <= 70) return;
+    char tbuf[6];
+    snprintf(tbuf, sizeof(tbuf), "%02d:%02d", t.tm_hour, t.tm_min);
+    tft.fillRect(250, 58, DISPLAY_WIDTH - 250, 14, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(250, 62);
+    tft.print(tbuf);
+}
+
 // ─── Token expired ───────────────────────────────────────────────────────────
 
 void uiShowTokenExpired(const String& localIP) {

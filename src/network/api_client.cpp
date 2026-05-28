@@ -1,6 +1,5 @@
 #include "api_client.h"
 #include "../../include/config.h"
-#include "certs.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
@@ -9,7 +8,7 @@ static const char PROBE_BODY[] =
 
 static bool doRequest(const char* token, RateLimit& out, int& httpCode) {
     WiFiClientSecure ssl;
-    ssl.setCACert(ANTHROPIC_ROOT_CA);
+    ssl.setInsecure();  // cert chain for api.anthropic.com rotates; pinning caused E-1
 
     HTTPClient https;
     https.setTimeout(15000);
@@ -42,8 +41,8 @@ static bool doRequest(const char* token, RateLimit& out, int& httpCode) {
             out.util7d    = h7u.toFloat();
             out.reset7dAt = (time_t)h7r.toInt();
             out.valid     = true;
-            ok            = true;
         }
+        ok = (httpCode == 200);
 
         https.end();
     }

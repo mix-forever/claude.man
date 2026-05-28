@@ -15,7 +15,7 @@
 
 // ─── Buttons (INPUT_PULLUP) ─────────────────────────────────────────────────
 #define PIN_BTN_ALARM   2   // Button A: test / long = alarm threshold
-#define PIN_BTN_BRIGHT  3   // Button B: brightness / long = mute toggle
+#define PIN_BTN_BRIGHT  3   // Button B: brightness / long = mute toggle (shares GPIO3 with TFT_MISO dummy — both input-only, no conflict)
 
 // ─── Buzzer (passive, NPN via GPIO 0) ───────────────────────────────────────
 #define PIN_BUZZER      0
@@ -28,6 +28,10 @@
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 #define DEFAULT_BRIGHTNESS  100
 #define DEFAULT_ALARM_THR   80
+
+// ─── Timings ─────────────────────────────────────────────────────────────────
+#define AUTO_DIM_MS         300000   // 5 min without button press → dim to 25%
+#define ALARM_ONE_SHOT_MS   10000    // play alarm for 10 s, then silence until next crossing
 
 // ─── App ────────────────────────────────────────────────────────────────────
 #define AP_SSID_PREFIX   "Claude-Monitor"

@@ -57,7 +57,7 @@ void apiTaskStart(const char* token) {
         xSemaphoreGive(g_mtx);
     }
 
-    xTaskCreate(apiPollTask, "apiPoll", 8192, nullptr, 1, &g_task);
+    xTaskCreate(apiPollTask, "apiPoll", 12288, nullptr, 1, &g_task);
 }
 
 void apiTaskUpdateToken(const char* token) {

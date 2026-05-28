@@ -25,9 +25,18 @@ static int       lastHttp        = 0;
 static uint32_t  errorStart      = 0;
 static String    errorMsg        = "";
 static bool      apiTaskStarted  = false;
+static uint32_t  lastClockUpdate = 0;
 
 // ─── Overlay (temporary UI feedback) ─────────────────────────────────────────
 static uint32_t  overlayClearAt  = 0;
+
+// ─── Auto-dim ────────────────────────────────────────────────────────────────
+static uint32_t  lastInteraction = 0;
+static bool      autoDimmed      = false;
+
+// ─── One-shot alarm ──────────────────────────────────────────────────────────
+static bool      alarmArmed      = true;
+static uint32_t  alarmStartedAt  = 0;
 static uint16_t  overlayColor    = TFT_WHITE;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -72,18 +81,31 @@ static void drawOverlay(const char* text, uint16_t color) {
 static void checkAlarm() {
     if (!rateLimit.valid || cfg.alarmThr == 0) {
         buzzerSetAlarmLevel(ALARM_NONE);
+        alarmArmed = true;
         return;
     }
-    float u = rateLimit.util5h;
-    if (u < cfg.alarmThr / 100.0f) {
+    float u   = rateLimit.util5h;
+    float thr = cfg.alarmThr / 100.0f;
+
+    if (u < thr) {
         buzzerSetAlarmLevel(ALARM_NONE);
-    } else if (u >= 1.0f) {
-        buzzerSetAlarmLevel(ALARM_CRITICAL);
-    } else if (u >= 0.9f) {
-        buzzerSetAlarmLevel(ALARM_HIGH);
-    } else {
-        buzzerSetAlarmLevel(ALARM_LOW);
+        alarmArmed = true;   // re-arm: ready for next crossing
+        return;
     }
+
+    // Above threshold but alarm already fired this crossing — stop after timeout
+    if (!alarmArmed) {
+        if ((int32_t)(millis() - alarmStartedAt) >= ALARM_ONE_SHOT_MS)
+            buzzerSetAlarmLevel(ALARM_NONE);
+        return;
+    }
+
+    // First crossing: fire alarm once
+    alarmArmed     = false;
+    alarmStartedAt = millis();
+    if      (u >= 1.0f) buzzerSetAlarmLevel(ALARM_CRITICAL);
+    else if (u >= 0.9f) buzzerSetAlarmLevel(ALARM_HIGH);
+    else                buzzerSetAlarmLevel(ALARM_LOW);
 }
 
 // ─── Button handlers ─────────────────────────────────────────────────────────
@@ -230,6 +252,7 @@ void loop() {
 
             uiShowMain(rateLimit, true, false, 0, wifiLocalIP());
             pacmanDraw();
+            lastInteraction = millis();
             state = S_RUNNING;
         } else {
             errorMsg = "st:" + String(WiFi.status())
@@ -245,14 +268,29 @@ void loop() {
     case S_RUNNING: {
         buzzerAlarmTick();
 
-        // Buttons
+        // Buttons — any press resets auto-dim
         ButtonEvent evA = buttonsGetEvent(BTN_ALARM);
+        ButtonEvent evB = buttonsGetEvent(BTN_BRIGHT);
+
+        if (evA != EVT_NONE || evB != EVT_NONE) {
+            lastInteraction = millis();
+            if (autoDimmed) {
+                autoDimmed = false;
+                displaySetBrightness(cfg.brightness);
+            }
+        }
+
         if (evA == EVT_SHORT) handleBtnAlarmShort();
         else if (evA == EVT_LONG) handleBtnAlarmLong();
 
-        ButtonEvent evB = buttonsGetEvent(BTN_BRIGHT);
         if (evB == EVT_SHORT) handleBtnBrightShort();
         else if (evB == EVT_LONG) handleBtnBrightLong();
+
+        // Auto-dim after inactivity
+        if (!autoDimmed && (int32_t)(millis() - lastInteraction) >= AUTO_DIM_MS) {
+            autoDimmed = true;
+            displaySetBrightness(25);
+        }
 
         // WiFi drop
         if (!wifiIsConnected()) {
@@ -285,6 +323,13 @@ void loop() {
 
         webConfigHandle();
         pacmanTick();
+
+        // Clock + countdowns — refresh every minute (independent of API poll)
+        if (overlayClearAt == 0 && (int32_t)(millis() - lastClockUpdate) >= 60000) {
+            lastClockUpdate = millis();
+            uiRefreshClock();
+            if (apiOK) uiRefreshCountdowns(rateLimit);
+        }
 
         // Clear overlay after timeout
         if (overlayClearAt > 0 && (int32_t)(millis() - overlayClearAt) >= 0) {

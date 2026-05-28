@@ -5,5 +5,7 @@
 void uiShowConfigMode(const String& apSSID, const String& ip, const String& pass = "");
 void uiShowConnecting(const String& ssid);
 void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode = -1, const String& localIP = "");
+void uiRefreshClock();
+void uiRefreshCountdowns(const RateLimit& rl);
 void uiShowError(const String& msg, int restartSecs = -1);
 void uiShowTokenExpired(const String& localIP = "");

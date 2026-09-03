@@ -11,18 +11,19 @@ Polls the Anthropic OAuth usage API every 3 minutes and renders a Pac-Man animat
 ## Features
 
 - **Live usage tracking** — 5-hour and 7-day utilization from `POST /v1/messages` rate-limit headers
-- **Pac-Man progress bar** — Pac-Man eats dots as your quota fills up; fewer dots = less quota left
+- **Arcade Pac-Man corridor** — Pac-Man eats pellets as your quota fills up; Blinky waits at the alarm threshold and chases once you cross it; `GAME OVER` at 100%
 - **Color-coded alerts** — yellow (OK) → orange (70%+) → red (90%+), using official arcade palette
 - **Buzzer alarms** — one-shot alarm fires when threshold is crossed; silences after 10 s; re-arms only after utilization drops and rises again
 - **PWM backlight dimming** — 4 hardware brightness levels (25/50/75/100%), persisted in NVS
-- **Auto-dim** — backlight drops to 25% after 5 minutes of inactivity; any button press restores full brightness
+- **Auto-dim** — backlight drops to 25% after 5 minutes of inactivity; the first button press only restores brightness (no action)
 - **Two tactile buttons** — test/alarm threshold (A) and brightness/mute (B)
 - **Live countdown** — 5H and 7D reset timers tick every minute, independent of the 3-minute API poll
-- **Wi-Fi config portal** — password-protected AP on first boot; token-only update page during normal operation
-- **OTA firmware updates** — upload `.bin` via the web dashboard at `http://claude-monitor.local/update`
-- **mDNS** — reachable as `claude-monitor.local` on your network
+- **Wi-Fi config portal** — password-protected AP on first boot; falls back to it automatically after 3 failed connections (wrong password) with the SSID prefilled
+- **Web dashboard** — live 5h/7d meters with reset countdowns, API/Wi-Fi state, firmware version, token update, OTA
+- **OTA firmware updates** — upload `.bin` from the web dashboard; progress bar on the page and on the display, auto-reload after reboot
+- **mDNS** — reachable as `claude-monitor.local` on your network (Wi-Fi modem-sleep is disabled so the device reliably answers multicast queries)
 - **Factory reset** — hold BOOT button (GPIO9) at power-on to wipe all config and re-enter setup
-- **Token-only reset** — hold Button A (GPIO2) at power-on for 3 s to wipe just the OAuth token (keep Wi-Fi)
+- **Token-only reset** — hold Button A (GPIO2) at power-on for 3 s to wipe just the OAuth token; the device reconnects to Wi-Fi and shows `BRAK TOKENU` with its URL until a new token is pushed
 
 ---
 
@@ -80,6 +81,12 @@ GPIO 0  ──[1kΩ]──► NPN base            (buzzer, PWM CH1)
 pio run -t upload --upload-port /dev/ttyACM0
 ```
 
+### Display simulator (no hardware needed)
+
+```bash
+python3 tools/sim/sim.py /tmp/lcd 4   # renders every screen to /tmp/lcd/*.png (needs g++ and Pillow)
+```
+
 > The port on ESP32-C3 SuperMini (native USB CDC) is `/dev/ttyACM0` on Linux, `COMx` on Windows. The port number can change between sessions.
 
 ### Required TFT_eSPI patches
@@ -104,8 +111,8 @@ The complete `User_Setup.h` contents are also in that document.
 2. The device starts a WPA2-protected Wi-Fi AP named `Claude-Monitor-XXXX`.
 3. The random 8-character password is displayed on the screen — enter it on your phone/laptop.
 4. Connect to the AP and open `http://192.168.4.1`.
-5. Enter your Wi-Fi SSID, password, and Claude OAuth token.
-6. The device saves config to NVS flash, restarts, and connects to your network.
+5. Enter your Wi-Fi SSID and password. The Claude OAuth token is optional here — you can add it later from the dashboard or let `sync-token.py` push it.
+6. The device saves config to NVS flash, restarts, and connects to your network. If the password was wrong, after 3 attempts it returns to the setup AP with the SSID prefilled and retries the stored network every 10 minutes.
 
 ### Getting the OAuth token
 
@@ -120,7 +127,7 @@ Copy the `accessToken` value into the config form. Tokens expire every few hours
 
 ### Updating the token without reconfiguring Wi-Fi
 
-Visit `http://claude-monitor.local/` (or `http://<device-ip>/`) and paste the new token in the dashboard.
+Visit `http://claude-monitor.local/` (or `http://<device-ip>/`) and paste the new token in the dashboard. The dashboard also shows live usage meters, reset countdowns, connection state and the running firmware version (`GET /status` returns the same data as JSON).
 
 ### Automatic token sync (recommended)
 
@@ -135,7 +142,7 @@ python3 -m pip install watchdog
 python3 tools/sync-token.py
 ```
 
-If `watchdog` is not installed, the script falls back to polling every 10 minutes.
+If `watchdog` is not installed, the script falls back to polling every 10 minutes. In watchdog mode a push that fails (device offline) is retried every 60 s.
 
 #### Option B — systemd Path unit (Linux, recommended)
 
@@ -185,6 +192,16 @@ Environment variables (all options):
 - `CLAUDE_MON_HOST` — device hostname/IP (default: `claude-monitor.local`)
 - `CLAUDE_MON_INTERVAL` — polling fallback interval in seconds (default: `600`)
 
+#### When `.local` resolution is flaky
+
+mDNS depends on multicast reaching the device. After every successful push the script stores the device IP in `~/.cache/claude-man/host` and falls back to it when `claude-monitor.local` does not resolve (3 attempts). To seed the cache, or to skip mDNS entirely, run once with the IP:
+
+```bash
+CLAUDE_MON_HOST=192.168.1.50 python3 tools/sync-token.py --oneshot
+```
+
+A DHCP reservation on the router keeps that IP stable. To pin it permanently for the systemd units, add `Environment=CLAUDE_MON_HOST=<ip>` under `[Service]` in `sync-token.service`.
+
 ---
 
 ## Button reference
@@ -195,7 +212,7 @@ Both buttons use internal pull-ups (`INPUT_PULLUP`). Press = connect to GND.
 |---|---|---|
 | **A** (GPIO2) | Short press | Test buzzer (plays 1500 Hz beep; does not change mute state) |
 | **A** (GPIO2) | Long press (≥ 1.5 s) | Cycle alarm threshold: **80% → 90% → OFF → 80%** |
-| **A** (GPIO2) | Hold at boot (≥ 3 s) | Reset **only** the OAuth token; Wi-Fi credentials are preserved |
+| **A** (GPIO2) | Hold at boot (≥ 3 s) | Reset **only** the OAuth token; Wi-Fi credentials are preserved and the device waits online for a new token |
 | **B** (GPIO3) | Short press | Cycle backlight: **25% → 50% → 75% → 100%** |
 | **B** (GPIO3) | Long press (≥ 1.5 s) | Toggle buzzer mute ON / OFF |
 
@@ -224,8 +241,9 @@ Long-press Button B to mute/unmute all alarm sounds instantly.
 ┌────────────────────────────────────────────────┐  ← 284 px wide
 │ ▌  CLAUDE·MAN                       192.168.1.5│  y  0–11   title + IP
 │─────────────────────────────────────────────────│
-│ ·  ·  ·  ·  ·  ·  ·  C>  ·  ·  ·  ·   47%    │  y 12–57   Pac-Man track
-│                                          1h33m  │            + 5H data (right)
+│ ╔═══════════════════════════════════════╗ [5H]│  y 12–57   maze corridor:
+│ ║   C>  ▪  ▪  ▪  ▪  ▪  ▪  A  ▪  ▪  ▪  ║  47% │            Pac-Man, pellets,
+│ ╚═══════════════════════════════════════╝ 1h33m│            Blinky at threshold
 │─────────────────────────────────────────────────│
 │ ▌ [7D] 12%  5d02h  AL 80%   ●WiFi  ●API  14:22│  y 58–71   bottom bar
 │▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │  y 72–75   7D progress bar
@@ -235,7 +253,8 @@ Long-press Button B to mute/unmute all alarm sounds instantly.
 | Zone | Content |
 |---|---|
 | Top bar | `CLAUDE·MAN` title (Inky cyan · Clyde orange · Pac yellow), local IP dim right |
-| Pac-Man track | Animated Pac-Man, uneaten dots to the right, 5H `%` and reset time far right |
+| Pac-Man corridor | Double maze walls, animated Pac-Man, uneaten pellets to the right, Blinky at the alarm threshold (chases after crossing), `GAME OVER` at 100% |
+| 5H column | `[5H]` badge, big utilization `%` (yellow / orange / red), reset countdown |
 | Bottom bar | `[7D]` badge, 7D utilization %, reset time, **alarm/brightness overlay**, WiFi dot, API dot, clock |
 | Progress bar | 3D metallic 7D utilization bar |
 
@@ -330,7 +349,7 @@ S_RUNNING: async API poll every 3 min, Pac-Man animation, web dashboard, button 
 ## Notes
 
 - The probe request (`POST /v1/messages` with `max_tokens: 1`) costs ~1 token per poll. At 3-minute intervals that is ~480 probes/day — negligible against any real usage.
-- OAuth tokens expire. The device shows a red `TOKEN WYGASL (401)` screen with the update URL when that happens.
+- OAuth tokens expire. The device shows a red `TOKEN WYGASL (401)` screen with the update URL when that happens. With no token stored at all it shows `BRAK TOKENU` and makes no API requests.
 - API polling backs off to 5 minutes automatically if the server returns HTTP 429 (rate limited).
 - `Serial` output goes to UART0 hardware pins (GPIO20/21) on ESP32-C3 SuperMini without `ARDUINO_USB_CDC_ON_BOOT=1` — it is **not** visible on the USB port. Do not add that flag (causes compile errors with TFT_eSPI).
 

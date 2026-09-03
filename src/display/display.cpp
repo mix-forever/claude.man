@@ -10,6 +10,7 @@ void displayInit() {
     displayBacklight(true);
     tft.init();
     tft.setRotation(DISPLAY_ROTATION);
+    tft.setSwapBytes(true);   // pushImage() from native uint16_t buffers
     tft.fillScreen(TFT_BLACK);
 }
 

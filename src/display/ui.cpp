@@ -39,6 +39,13 @@ static uint16_t utilColor(float f) {
     return C_PAC;
 }
 
+// ─── Time ────────────────────────────────────────────────────────────────────
+
+// Countdowns are meaningless until SNTP has set the clock.
+static bool timeValid() {
+    return time(nullptr) > 1000000000UL;
+}
+
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
 static String fmtPct(float v) {
@@ -89,6 +96,21 @@ static void drawDot3D(int cx, int cy, int r, uint16_t color) {
     tft.fillCircle(cx - 1, cy - 1, 1,  brightColor(color)); // specular
 }
 
+// Big percentage: digits at text size 2 (12x16), '%' at size 1, right-aligned.
+static void drawBigPct(int xRight, int y, float v, uint16_t color) {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%.0f", v * 100.0f);
+    int w = (int)strlen(buf) * 12 + 6;
+    int x = xRight - w;
+    tft.setTextSize(2);
+    tft.setTextColor(color, TFT_BLACK);
+    tft.setCursor(x, y);
+    tft.print(buf);
+    tft.setTextSize(1);
+    tft.setCursor(x + (int)strlen(buf) * 12, y + 8);
+    tft.print("%");
+}
+
 // 3D metallic bar: bright top highlight, solid fill ×2, dark shadow bottom
 static void drawBar3D(int y, float f, uint16_t color) {
     uint16_t hi = brightColor(color),  sh = dimColor(color);
@@ -105,16 +127,18 @@ static void drawBar3D(int y, float f, uint16_t color) {
 
 // ─── Config mode ─────────────────────────────────────────────────────────────
 
-void uiShowConfigMode(const String& apSSID, const String& ip, const String& pass) {
+void uiShowConfigMode(const String& apSSID, const String& ip, const String& pass,
+                      const char* reason) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextSize(1);
 
-    tft.fillRect(0, 0, 3, DISPLAY_HEIGHT, C_MAZE);  // maze-blue left accent bar
+    uint16_t accent = reason ? C_BLINKY : C_MAZE;
+    tft.fillRect(0, 0, 3, DISPLAY_HEIGHT, accent);  // left accent bar
 
-    tft.setTextColor(C_PAC, TFT_BLACK);
+    tft.setTextColor(reason ? C_BLINKY : C_PAC, TFT_BLACK);
     tft.setCursor(7, 4);
-    tft.print("KONFIGURACJA");
-    tft.drawFastHLine(3, 15, DISPLAY_WIDTH - 3, dimColor(C_MAZE));
+    tft.print(reason ? reason : "KONFIGURACJA");
+    tft.drawFastHLine(3, 15, DISPLAY_WIDTH - 3, dimColor(accent));
 
     tft.setTextColor(C_DIM, TFT_BLACK);
     tft.setCursor(7, 20);
@@ -181,9 +205,9 @@ void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode, co
         tft.setTextColor(C_INKY, TFT_BLACK);
         tft.setCursor(cx, 2);
         tft.print("CLAUDE");
-        tft.setTextColor(C_CLYDE, TFT_BLACK);
-        tft.print(".");
+        tft.fillRect(cx + 38, 5, 2, 2, C_CLYDE);   // real middle dot (font has none)
         tft.setTextColor(C_PAC, TFT_BLACK);
+        tft.setCursor(cx + 42, 2);
         tft.print("MAN");
     }
 
@@ -197,23 +221,25 @@ void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode, co
     // Separator line
     tft.drawFastHLine(3, 11, DISPLAY_WIDTH - 3, dimColor(C_MAZE));
 
-    // ── 5H data (far right of Pac-Man strip, y=12..57 = 46px) ───────────────
-    tft.fillRect(248, 12, DISPLAY_WIDTH - 248, 46, TFT_BLACK);
-
-    tft.setTextSize(1);
+    // ── 5H data column (x=242..283, y=12..57): badge, big %, countdown ──────
+    tft.fillRect(242, 12, DISPLAY_WIDTH - 242, 46, TFT_BLACK);
+    drawBadge(DISPLAY_WIDTH - 21, 13, "5H");
     {
-        // Two rows centered in 46px strip: 8+4+8=20px → start y=12+(46-20)/2=25
-        String pct = rl.valid ? fmtPct(u5h) : "---%";
-        tft.setTextColor(rl.valid ? c5 : TFT_WHITE, TFT_BLACK);
-        tft.setCursor(281 - (int)pct.length() * 6, 25);
-        tft.print(pct);
-
         if (rl.valid) {
+            drawBigPct(DISPLAY_WIDTH - 1, 27, u5h, c5);
+        } else {
+            tft.setTextSize(2);
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            tft.setCursor(DISPLAY_WIDTH - 1 - 36, 27);
+            tft.print("---");
+        }
+        tft.setTextSize(1);
+        if (rl.valid && timeValid()) {
             int secsLeft = (int)(rl.reset5hAt - time(nullptr));
             if (secsLeft > 0) {
                 String rs = secsToStr(secsLeft);
                 tft.setTextColor(TFT_WHITE, TFT_BLACK);
-                tft.setCursor(281 - (int)rs.length() * 6, 37);
+                tft.setCursor(DISPLAY_WIDTH - 1 - (int)rs.length() * 6, 47);
                 tft.print(rs);
             }
         }
@@ -238,7 +264,7 @@ void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode, co
             tft.setTextColor(C_BLINKY, TFT_BLACK);
             tft.setCursor(32 + (int)pct.length() * 6 + 6, 61);
             tft.print(code);
-        } else if (rl.valid) {
+        } else if (rl.valid && timeValid()) {
             int secsLeft7 = (int)(rl.reset7dAt - time(nullptr));
             if (secsLeft7 > 0) {
                 String rs = secsToStr(secsLeft7);
@@ -281,17 +307,17 @@ void uiShowMain(const RateLimit& rl, bool wifiOK, bool apiOK, int apiErrCode, co
 // ─── Countdown refresh (5H + 7D reset times, independent of full redraw) ─────
 
 void uiRefreshCountdowns(const RateLimit& rl) {
-    if (!rl.valid) return;
+    if (!rl.valid || !timeValid()) return;
     time_t now = time(nullptr);
 
-    // 5H reset time — right column (x=248..283), row below pct (y≈37)
-    tft.fillRect(248, 33, DISPLAY_WIDTH - 248, 12, TFT_BLACK);
+    // 5H reset time — right column (x=242..283), row below the big % (y=47)
+    tft.fillRect(242, 46, DISPLAY_WIDTH - 242, 10, TFT_BLACK);
     int secs5 = (int)(rl.reset5hAt - now);
     if (secs5 > 0) {
         String rs = secsToStr(secs5);
         tft.setTextSize(1);
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.setCursor(281 - (int)rs.length() * 6, 37);
+        tft.setCursor(DISPLAY_WIDTH - 1 - (int)rs.length() * 6, 47);
         tft.print(rs);
     }
 
@@ -328,14 +354,14 @@ void uiRefreshClock() {
 
 // ─── Token expired ───────────────────────────────────────────────────────────
 
-void uiShowTokenExpired(const String& localIP) {
+void uiShowTokenExpired(const String& localIP, const char* title) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextSize(1);
     tft.fillRect(0, 0, 3, DISPLAY_HEIGHT, C_BLINKY);
 
     tft.setTextColor(C_BLINKY, TFT_BLACK);
     tft.setCursor(7, 5);
-    tft.print("TOKEN WYGASL (401)");
+    tft.print(title);
     tft.drawFastHLine(3, 16, DISPLAY_WIDTH - 3, dimColor(C_BLINKY));
 
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -381,5 +407,89 @@ void uiShowError(const String& msg, int restartSecs) {
         tft.print(restartSecs);
         tft.setTextColor(C_DIM, TFT_BLACK);
         tft.print("s");
+    }
+}
+
+// ─── Overlay & messages ──────────────────────────────────────────────────────
+
+void uiDrawOverlay(const char* text, uint16_t color) {
+    int16_t w = strlen(text) * 6;
+    int16_t x = 90;            // between 7D data and WiFi dot
+    int16_t y = 61;
+    tft.fillRect(x - 2, y - 2, w + 4, 10, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setTextColor(color, TFT_BLACK);
+    tft.setCursor(x, y);
+    tft.print(text);
+}
+
+void uiShowMessage(const char* msg) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(C_PAC, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setCursor(4, 30);
+    tft.print(msg);
+}
+
+// ─── OTA progress ────────────────────────────────────────────────────────────
+
+static const int OTA_BAR_X = 7;
+static const int OTA_BAR_Y = 36;
+static const int OTA_BAR_W = DISPLAY_WIDTH - 14;
+static const int OTA_BAR_H = 14;
+
+void uiShowOtaProgress(int pct) {
+    if (pct < 0) {
+        tft.fillScreen(TFT_BLACK);
+        tft.fillRect(0, 0, 3, DISPLAY_HEIGHT, C_BLINKY);
+        tft.setTextSize(1);
+        tft.setTextColor(C_BLINKY, TFT_BLACK);
+        tft.setCursor(7, 5);
+        tft.print("OTA: BLAD ZAPISU");
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setCursor(7, 24);
+        tft.print("Sprobuj ponownie z dashboardu");
+        return;
+    }
+    if (pct > 100) pct = 100;
+
+    if (pct == 0) {
+        tft.fillScreen(TFT_BLACK);
+        tft.fillRect(0, 0, 3, DISPLAY_HEIGHT, C_MAZE);
+        tft.setTextSize(1);
+        tft.setTextColor(C_PAC, TFT_BLACK);
+        tft.setCursor(7, 5);
+        tft.print("AKTUALIZACJA FIRMWARE");
+        tft.drawFastHLine(3, 16, DISPLAY_WIDTH - 3, dimColor(C_MAZE));
+        tft.setTextColor(C_DIM, TFT_BLACK);
+        tft.setCursor(7, 22);
+        tft.print("Nie odlaczaj zasilania");
+        // Bar frame (maze-tile look)
+        tft.drawRect(OTA_BAR_X, OTA_BAR_Y, OTA_BAR_W, OTA_BAR_H, C_MAZE);
+        tft.drawRect(OTA_BAR_X + 1, OTA_BAR_Y + 1, OTA_BAR_W - 2, OTA_BAR_H - 2, dimColor(C_MAZE));
+    }
+
+    // Fill (Pac-Man yellow, 3D top highlight)
+    int innerW = OTA_BAR_W - 6;
+    int fw = innerW * pct / 100;
+    int fx = OTA_BAR_X + 3, fy = OTA_BAR_Y + 3, fh = OTA_BAR_H - 6;
+    tft.fillRect(fx, fy, innerW, fh, TFT_BLACK);
+    if (fw > 0) {
+        tft.fillRect(fx, fy, fw, fh, C_PAC);
+        tft.drawFastHLine(fx, fy, fw, brightColor(C_PAC));
+        tft.drawFastHLine(fx, fy + fh - 1, fw, dimColor(C_PAC));
+    }
+
+    // Percent text, centered under the bar
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%3d%%", pct);
+    tft.setTextSize(1);
+    tft.setTextColor(pct >= 100 ? C_INKY : TFT_WHITE, TFT_BLACK);
+    tft.setCursor((DISPLAY_WIDTH - 24) / 2, OTA_BAR_Y + OTA_BAR_H + 6);
+    tft.print(buf);
+    if (pct >= 100) {
+        tft.setTextColor(C_INKY, TFT_BLACK);
+        tft.setCursor(7, 64);
+        tft.print("Zapisano, restart...");
     }
 }

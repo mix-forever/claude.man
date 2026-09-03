@@ -23,17 +23,18 @@ static void apiPollTask(void* /*param*/) {
 
         RateLimit rl;
         int code = 0;
-        bool ok = apiFetch(localToken, rl, code);
+        bool ok = false;
+        if (localToken[0] == '\0') {
+            code = 401;  // no token yet — don't bother the API
+        } else {
+            ok = apiFetch(localToken, rl, code);
+        }
 
         if (xSemaphoreTake(g_mtx, portMAX_DELAY) == pdTRUE) {
-            if (ok) {
-                g_rl   = rl;
-                g_ok   = true;
-                g_code = 0;
-            } else {
-                g_ok   = false;
-                g_code = code;
-            }
+            // Rate-limit headers are present even on 429/401 — keep them when parsed
+            if (rl.valid) g_rl = rl;
+            g_ok     = ok;
+            g_code   = ok ? 0 : code;
             g_hasNew = true;
             xSemaphoreGive(g_mtx);
         }
@@ -89,6 +90,16 @@ bool apiTaskHasResult() {
     bool v = false;
     if (xSemaphoreTake(g_mtx, 0) == pdTRUE) {
         v = g_hasNew;
+        xSemaphoreGive(g_mtx);
+    }
+    return v;
+}
+
+bool apiTaskHasToken() {
+    if (g_mtx == nullptr) return false;
+    bool v = false;
+    if (xSemaphoreTake(g_mtx, portMAX_DELAY) == pdTRUE) {
+        v = g_token[0] != '\0';
         xSemaphoreGive(g_mtx);
     }
     return v;

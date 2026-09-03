@@ -34,8 +34,11 @@
 #define ALARM_ONE_SHOT_MS   10000    // play alarm for 10 s, then silence until next crossing
 
 // ─── App ────────────────────────────────────────────────────────────────────
+#define FW_VERSION       "1.1.0"      // shown in dashboard footer and /status
 #define AP_SSID_PREFIX   "Claude-Monitor"
 #define WIFI_TIMEOUT_MS  30000
+#define WIFI_MAX_FAILS   3            // consecutive STA failures → fall back to AP setup
+#define AP_RETRY_MS      600000       // AP fallback: retry stored Wi-Fi after 10 min
 #define API_POLL_MS      180000
 #define API_HOST         "api.anthropic.com"
 #define API_MODEL        "claude-haiku-4-5-20251001"

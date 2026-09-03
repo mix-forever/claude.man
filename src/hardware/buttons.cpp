@@ -16,8 +16,8 @@ struct BtnState {
 static BtnState states[2];
 
 void buttonsInit() {
-    states[0] = { PIN_BTN_ALARM,  true, true, 0, 0, false };
-    states[1] = { PIN_BTN_BRIGHT, true, true, 0, 0, false };
+    states[0] = { PIN_BTN_ALARM,  false, false, 0, 0, false };  // released
+    states[1] = { PIN_BTN_BRIGHT, false, false, 0, 0, false };  // released
     pinMode(PIN_BTN_ALARM,  INPUT_PULLUP);
     pinMode(PIN_BTN_BRIGHT, INPUT_PULLUP);
 }

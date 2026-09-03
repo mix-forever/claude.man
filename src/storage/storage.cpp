@@ -22,7 +22,7 @@ bool storageLoad(AppConfig& cfg) {
     cfg.alarmThr   = p.getUChar("alarm_thr",  DEFAULT_ALARM_THR);
     cfg.buzzerMute = p.getBool("buzzer_mute", false);
     p.end();
-    return cfg.ssid[0] != '\0' && cfg.apiKey[0] != '\0';
+    return cfg.ssid[0] != '\0';
 }
 
 void storageSave(const AppConfig& cfg) {
@@ -37,9 +37,33 @@ void storageSave(const AppConfig& cfg) {
     p.end();
 }
 
+void storageSaveSettings(const AppConfig& cfg) {
+    Preferences p;
+    p.begin(NS, false);
+    p.putUChar("brightness", cfg.brightness);
+    p.putUChar("alarm_thr",  cfg.alarmThr);
+    p.putBool("buzzer_mute", cfg.buzzerMute);
+    p.end();
+}
+
 void storageClear() {
     Preferences p;
     p.begin(NS, false);
     p.clear();
+    p.end();
+}
+
+uint8_t storageGetWifiFails() {
+    Preferences p;
+    p.begin(NS, true);
+    uint8_t n = p.getUChar("wifi_fail", 0);
+    p.end();
+    return n;
+}
+
+void storageSetWifiFails(uint8_t n) {
+    Preferences p;
+    p.begin(NS, false);
+    if (p.getUChar("wifi_fail", 0) != n) p.putUChar("wifi_fail", n);   // spare NVS wear
     p.end();
 }

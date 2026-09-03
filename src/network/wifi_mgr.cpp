@@ -31,6 +31,10 @@ bool wifiConnectSTA(const char* ssid, const char* pass, uint32_t timeoutMs) {
         if (millis() - start > timeoutMs) return false;
         delay(100);
     }
+    // Modem-sleep makes the ESP32 miss multicast frames (mDNS queries),
+    // so name resolution from other hosts becomes unreliable. The device is
+    // mains-powered — trade a few tens of mA for reliable .local lookups.
+    WiFi.setSleep(false);
     return true;
 }
 

@@ -19,13 +19,23 @@ enum State { S_INIT, S_AP_MODE, S_CONNECTING, S_RUNNING, S_ERROR };
 
 static State     state           = S_INIT;
 static AppConfig cfg;
+static bool      hasWifiCfg      = false;
 static RateLimit rateLimit;
 static bool      apiOK           = false;
 static int       lastHttp        = 0;
 static uint32_t  errorStart      = 0;
 static String    errorMsg        = "";
 static bool      apiTaskStarted  = false;
+static bool      mdnsStarted     = false;
+static uint32_t  otaRedrawAt     = 0;   // after a failed OTA, restore the screen
+static uint8_t   wifiFails       = 0;   // consecutive STA failures (from NVS)
+static uint32_t  apRetryAt       = 0;   // AP fallback: when to retry stored Wi-Fi
 static uint32_t  lastClockUpdate = 0;
+
+// ─── Screen mode ─────────────────────────────────────────────────────────────
+// While the full-screen token message is shown, the Pac-Man ticker, clock
+// refresh and overlay restore must not draw the main layout over it.
+static bool      tokenScreen     = false;
 
 // ─── Overlay (temporary UI feedback) ─────────────────────────────────────────
 static uint32_t  overlayClearAt  = 0;
@@ -37,7 +47,6 @@ static bool      autoDimmed      = false;
 // ─── One-shot alarm ──────────────────────────────────────────────────────────
 static bool      alarmArmed      = true;
 static uint32_t  alarmStartedAt  = 0;
-static uint16_t  overlayColor    = TFT_WHITE;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,18 +75,22 @@ static bool ntpSynced() {
     return time(nullptr) > 1000000000UL;
 }
 
-static void drawOverlay(const char* text, uint16_t color) {
-    int16_t w = strlen(text) * 6;
-    int16_t x = 90;            // between 7D % and WiFi dot
-    int16_t y = 61;
-    tft.fillRect(x - 2, y - 2, w + 4, 10, TFT_BLACK);
-    tft.setTextColor(color, TFT_BLACK);
-    tft.setCursor(x, y);
-    tft.print(text);
-    overlayClearAt = millis() + 1500;
-    overlayColor   = color;
+// Redraw whatever screen is current (main layout or token message).
+static void redrawCurrentScreen() {
+    if (tokenScreen) {
+        uiShowTokenExpired(wifiLocalIP(),
+                           apiTaskHasToken() ? "TOKEN WYGASL (401)" : "BRAK TOKENU");
+    } else {
+        uiShowMain(rateLimit, wifiIsConnected(), apiOK, lastHttp, wifiLocalIP());
+    }
 }
 
+static void drawOverlay(const char* text, uint16_t color) {
+    uiDrawOverlay(text, color);
+    overlayClearAt = millis() + 1500;
+}
+
+// Called every loop: drives the one-shot alarm timeout as well as arming.
 static void checkAlarm() {
     if (!rateLimit.valid || cfg.alarmThr == 0) {
         buzzerSetAlarmLevel(ALARM_NONE);
@@ -108,7 +121,62 @@ static void checkAlarm() {
     else                buzzerSetAlarmLevel(ALARM_LOW);
 }
 
+// ─── /status provider (called from inside webConfigHandle) ───────────────────
+
+static void provideStatus(DeviceStatus& st) {
+    st.valid      = rateLimit.valid;
+    st.util5h     = rateLimit.util5h;
+    st.util7d     = rateLimit.util7d;
+    if (rateLimit.valid && ntpSynced()) {
+        time_t now   = time(nullptr);
+        st.reset5hIn = (int32_t)(rateLimit.reset5hAt - now);
+        st.reset7dIn = (int32_t)(rateLimit.reset7dAt - now);
+    }
+    st.apiOK      = apiOK;
+    st.lastHttp   = lastHttp;
+    st.hasToken   = apiTaskHasToken();
+    st.brightness = cfg.brightness;
+    st.alarmThr   = cfg.alarmThr;
+    st.mute       = cfg.buzzerMute;
+}
+
+// Enter AP setup mode. With stored Wi-Fi (fallback after failures) the form is
+// prefilled with the SSID and the device retries the stored network later.
+static void enterApMode(const char* reason) {
+    String apSSID = buildApSSID();
+    char apPass[9];
+    generateApPassword(apPass, sizeof(apPass));
+    if (!wifiStartAP(apSSID.c_str(), apPass)) {
+        errorMsg = "AP init failed";
+        uiShowError(errorMsg, 30);
+        errorStart = millis();
+        state = S_ERROR;
+        return;
+    }
+    if (hasWifiCfg) {
+        String notice = "Nie udało się połączyć z siecią <b>" + String(cfg.ssid)
+                      + "</b> (" + String(WIFI_MAX_FAILS) + " próby). Sprawdź hasło. "
+                        "Bez zmian urządzenie spróbuje ponownie za 10 minut.";
+        webConfigBegin(true, cfg.ssid, notice.c_str(), cfg.apiKey[0] != '\0');
+        apRetryAt = millis() + AP_RETRY_MS;
+    } else {
+        webConfigBegin(true);
+    }
+    uiShowConfigMode(apSSID, "192.168.4.1", apPass, reason);
+    state = S_AP_MODE;
+}
+
+// ─── OTA progress (called from inside webConfigHandle) ───────────────────────
+
+static void onOtaProgress(int pct) {
+    if (pct == 0) buzzerSetAlarmLevel(ALARM_NONE);   // upload blocks the loop
+    uiShowOtaProgress(pct);
+    if (pct < 0) otaRedrawAt = millis() + 3000;
+}
+
 // ─── Button handlers ─────────────────────────────────────────────────────────
+// Button handlers persist only their own fields (storageSaveSettings) so a
+// token updated via the web dashboard is never overwritten by a stale copy.
 
 static void handleBtnAlarmShort() {
     buzzerTestBeep();
@@ -119,8 +187,11 @@ static void handleBtnAlarmLong() {
     if (cfg.alarmThr == 80) cfg.alarmThr = 90;
     else if (cfg.alarmThr == 90) cfg.alarmThr = 0;
     else cfg.alarmThr = 80;
-    storageSave(cfg);
+    storageSaveSettings(cfg);
+    alarmArmed = true;          // new threshold → allow a fresh one-shot
     checkAlarm();
+    pacmanSetThreshold(cfg.alarmThr / 100.0f);
+    if (!tokenScreen) pacmanDraw();   // move Blinky to the new threshold
 
     char buf[12];
     if (cfg.alarmThr == 0) snprintf(buf, sizeof(buf), "AL OFF");
@@ -135,7 +206,7 @@ static void handleBtnBrightShort() {
     else if (v <= 75) v = 100;
     else              v = 25;
     cfg.brightness = v;
-    storageSave(cfg);
+    storageSaveSettings(cfg);
     displaySetBrightness(v);
 
     char buf[12];
@@ -146,7 +217,7 @@ static void handleBtnBrightShort() {
 static void handleBtnBrightLong() {
     cfg.buzzerMute = !cfg.buzzerMute;
     buzzerMute(cfg.buzzerMute);
-    storageSave(cfg);
+    storageSaveSettings(cfg);
     if (cfg.buzzerMute) {
         buzzerSetAlarmLevel(ALARM_NONE);
         drawOverlay("MUTE ON", 0xF800);
@@ -162,6 +233,11 @@ void setup() {
     displayInit();
     buttonsInit();
     buzzerInit();
+
+    // Load config first so the boot melody and later alarms respect saved mute.
+    hasWifiCfg = storageLoad(cfg);
+    buzzerMute(cfg.buzzerMute);
+    pacmanSetThreshold(cfg.alarmThr / 100.0f);
     buzzerPlayStart();
 
     // BOOT button (GPIO9): hold at power-on → factory reset (clear config → AP mode)
@@ -169,11 +245,7 @@ void setup() {
     delay(80);
     if (digitalRead(9) == LOW) {
         storageClear();
-        tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-        tft.setTextSize(1);
-        tft.setCursor(4, 30);
-        tft.print("Factory reset...");
+        uiShowMessage("Factory reset...");
         delay(1500);
         ESP.restart();
     }
@@ -185,15 +257,9 @@ void setup() {
             delay(50);
         }
         if (buttonsIsPressed(BTN_ALARM)) {
-            AppConfig tmp;
-            storageLoad(tmp);           // load whatever exists
-            tmp.apiKey[0] = '\0';       // wipe token only
-            storageSave(tmp);
-            tft.fillScreen(TFT_BLACK);
-            tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-            tft.setTextSize(1);
-            tft.setCursor(4, 30);
-            tft.print("Token reset...");
+            cfg.apiKey[0] = '\0';       // wipe token only
+            storageSave(cfg);
+            uiShowMessage("Token reset...");
             delay(1500);
             ESP.restart();
         }
@@ -205,42 +271,49 @@ void setup() {
 void loop() {
     switch (state) {
 
-    // ── First boot or no config: start AP ────────────────────────────────
+    // ── No Wi-Fi config, or too many failed connects: start AP ───────────
     case S_INIT:
-        if (storageLoad(cfg)) {
+        wifiFails = hasWifiCfg ? storageGetWifiFails() : 0;
+        if (hasWifiCfg && wifiFails < WIFI_MAX_FAILS) {
             displaySetBrightness(cfg.brightness);
             state = S_CONNECTING;
         } else {
-            String apSSID = buildApSSID();
-            char apPass[9];
-            generateApPassword(apPass, sizeof(apPass));
-            if (!wifiStartAP(apSSID.c_str(), apPass)) {
-                errorMsg = "AP init failed";
-                uiShowError(errorMsg, 30);
-                errorStart = millis();
-                state = S_ERROR;
-                break;
+            if (hasWifiCfg) {
+                storageSetWifiFails(0);   // next restart tries the stored network again
+                displaySetBrightness(cfg.brightness);
             }
-            webConfigBegin(true);
-            uiShowConfigMode(apSSID, "192.168.4.1", apPass);
-            state = S_AP_MODE;
+            enterApMode(hasWifiCfg ? "BLAD WIFI - SPRAWDZ HASLO" : nullptr);
         }
         break;
 
     // ── Serve config page until user submits and device restarts ─────────
     case S_AP_MODE:
         webConfigHandle();
+        if (apRetryAt > 0 && (int32_t)(millis() - apRetryAt) >= 0) {
+            ESP.restart();            // fail counter was cleared → S_CONNECTING
+        }
         break;
 
     // ── Connect to WiFi, then start background API task ──────────────────
+    // A missing token is fine here: the device connects, shows "BRAK TOKENU"
+    // with its URL, and waits for the dashboard / sync-token.py to push one.
     case S_CONNECTING: {
         uiShowConnecting(cfg.ssid);
 
         bool connected = wifiConnectSTA(cfg.ssid, cfg.pass, WIFI_TIMEOUT_MS);
 
         if (connected) {
+            if (wifiFails > 0) {
+                wifiFails = 0;
+                storageSetWifiFails(0);
+            }
             ntpInit();
-            MDNS.begin("claude-monitor");
+            if (!mdnsStarted && MDNS.begin("claude-monitor")) {
+                MDNS.addService("http", "tcp", 80);   // announce → avahi caches us
+                mdnsStarted = true;
+            }
+            webConfigSetOtaProgress(onOtaProgress);
+            webConfigSetStatusProvider(provideStatus);
             webConfigBegin();
             uint32_t ntpWait = millis();
             while (!ntpSynced() && (int32_t)(millis() - ntpWait) < 3000) delay(100);
@@ -250,13 +323,21 @@ void loop() {
                 apiTaskStarted = true;
             }
 
-            uiShowMain(rateLimit, true, false, 0, wifiLocalIP());
+            // Keep the last known API state across a Wi-Fi reconnect.
+            tokenScreen = false;
+            uiShowMain(rateLimit, true, apiOK, lastHttp, wifiLocalIP());
             pacmanDraw();
             lastInteraction = millis();
             state = S_RUNNING;
         } else {
-            errorMsg = "st:" + String(WiFi.status())
-                     + " ssid:" + String(cfg.ssid);
+            // Count only boot-time failures; a mid-run Wi-Fi drop (wifiFails
+            // already 0 after a successful connect) restarts without penalty.
+            if (!apiTaskStarted) {
+                wifiFails++;
+                storageSetWifiFails(wifiFails);
+            }
+            errorMsg = "WiFi " + String(wifiFails) + "/" + String(WIFI_MAX_FAILS)
+                     + " st:" + String(WiFi.status()) + " " + String(cfg.ssid);
             uiShowError(errorMsg, 30);
             errorStart = millis();
             state      = S_ERROR;
@@ -268,7 +349,8 @@ void loop() {
     case S_RUNNING: {
         buzzerAlarmTick();
 
-        // Buttons — any press resets auto-dim
+        // Buttons — any press resets auto-dim. The press that wakes the
+        // display is consumed and does not trigger its normal action.
         ButtonEvent evA = buttonsGetEvent(BTN_ALARM);
         ButtonEvent evB = buttonsGetEvent(BTN_BRIGHT);
 
@@ -277,6 +359,8 @@ void loop() {
             if (autoDimmed) {
                 autoDimmed = false;
                 displaySetBrightness(cfg.brightness);
+                evA = EVT_NONE;
+                evB = EVT_NONE;
             }
         }
 
@@ -294,6 +378,7 @@ void loop() {
 
         // WiFi drop
         if (!wifiIsConnected()) {
+            buzzerSetAlarmLevel(ALARM_NONE);   // reconnect blocks; don't leave a tone on
             uiShowError("WiFi rozlaczone", -1);
             delay(2000);
             state = S_CONNECTING;
@@ -309,32 +394,43 @@ void loop() {
             rateLimit = rl;
             apiOK     = ok;
             lastHttp  = code;
+            overlayClearAt = 0;   // full redraw below supersedes any overlay
             if (!ok && code == 401) {
-                uiShowTokenExpired(wifiLocalIP());
+                tokenScreen = true;
+                redrawCurrentScreen();
             } else {
+                tokenScreen = false;
                 if (rl.valid) {
                     pacmanSetFraction(rl.util5h);
                     pacmanDraw();
                 }
-                uiShowMain(rateLimit, wifiIsConnected(), apiOK, lastHttp, wifiLocalIP());
+                redrawCurrentScreen();
             }
-            checkAlarm();
         }
 
+        checkAlarm();
         webConfigHandle();
-        pacmanTick();
+        if (!tokenScreen) pacmanTick();
 
         // Clock + countdowns — refresh every minute (independent of API poll)
-        if (overlayClearAt == 0 && (int32_t)(millis() - lastClockUpdate) >= 60000) {
+        if (!tokenScreen && overlayClearAt == 0 &&
+            (int32_t)(millis() - lastClockUpdate) >= 60000) {
             lastClockUpdate = millis();
             uiRefreshClock();
-            if (apiOK) uiRefreshCountdowns(rateLimit);
+            if (rateLimit.valid) uiRefreshCountdowns(rateLimit);
         }
 
         // Clear overlay after timeout
         if (overlayClearAt > 0 && (int32_t)(millis() - overlayClearAt) >= 0) {
             overlayClearAt = 0;
-            uiShowMain(rateLimit, wifiIsConnected(), apiOK, lastHttp, wifiLocalIP());
+            redrawCurrentScreen();
+        }
+
+        // Restore the normal screen a few seconds after a failed OTA
+        if (otaRedrawAt > 0 && (int32_t)(millis() - otaRedrawAt) >= 0) {
+            otaRedrawAt = 0;
+            redrawCurrentScreen();
+            if (!tokenScreen) pacmanDraw();
         }
         break;
     }
